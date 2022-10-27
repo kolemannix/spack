@@ -3,7 +3,6 @@ package spack
 import scala.Conversion
 import Constants._
 import scala.collection.immutable.ArraySeq
-import java.lang.Byte.toUnsignedInt
 
 object Constants {
   val NIL: Byte   = 0xc0
@@ -25,7 +24,7 @@ given Conversion[Int, Byte] with
   def apply(i: Int): Byte = i.toByte
 
 extension (b: Byte)
-  def toUnsignedInt: Int = java.lang.Byte.toUnsignedInt(b)
+  inline def toUnsignedInt: Int = (b: Int) & 0xff
 
 enum Message {
   case Bool(value: Boolean)
@@ -52,7 +51,7 @@ def parseStr8(message: Array[Byte]): Message.Str | ParseError =
   val length  = message.head.toUnsignedInt
   val content = message.slice(1, length + 1)
   if (content.length < length)
-    ParseError(s"Underflow reading Bin8: expected ${length} bytes, got ${content.length}", 0)
+    ParseError(s"Underflow reading Str8: expected ${length} bytes, got ${content.length}", 0)
   else
     Message.Str(new String(content, "UTF-8"))
 
@@ -62,36 +61,39 @@ def parseStr8(message: Array[Byte]): Message.Str | ParseError =
       * \+--------+========+
       * XXXXX is a 5-bit unsigned integer which represents N
       */
-def parseFixStr(message: Array[Byte]): Message.Str | ParseError =
-  val length  = java.lang.Byte.toUnsignedInt(message.head)
-  val content = message.slice(1, length + 1)
+def parseFixStr(length: Int, message: Array[Byte]): Message.Str | ParseError =
+  val content = message.take(length)
   if (content.length < length)
-    ParseError(s"Underflow reading Bin8: expected ${length} bytes, got ${content.length}", 0)
+    ParseError(s"Underflow reading FixStr: expected ${length} bytes, got ${content.length}", 0)
   else
     Message.Str(new String(content, "UTF-8"))
 
-/** Checks for the FixStr format, and if it matches,
-  * returns the length from the last 5 bits as an integer
-  */
-def isFixStrFormat(b: Byte): Option[Int] =
-  val unsigned = b.toUnsignedInt
-  if (unsigned >= Constants.FIX_STR_MIN && unsigned <= Constants.FIX_STR_MAX)
-  val length = b && 0xe0: Byte
+  /** Checks for the FixStr format, and if it matches,
+    * returns the length from the last 5 bits as an integer
+    */
+object FixStrFormat:
+  def unapply(b: Byte): Option[Int] =
+    val unsigned = b.toUnsignedInt
+    if (unsigned >= Constants.FIX_STR_MIN && unsigned <= Constants.FIX_STR_MAX) {
+      val length = (b & 0xe0: Byte)
+      Some(length)
+    } else {
+      None
+    }
 
 def parse(message: Array[Byte]): Message | ParseError =
   println(s"Parsing: [${message.mkString(" ")}]")
-  message(0) match {
-    case `NIL`                  => Message.Nil
-    case `FALSE`                => Message.Bool(true)
-    case `TRUE`                 => Message.Bool(false)
-    case other =>
-      
-    case b if isFixStrFormat(b) => parseBin8(message.tail)
-  }
+  message(0) match
+    case `NIL`                => Message.Nil
+    case `FALSE`              => Message.Bool(true)
+    case `TRUE`               => Message.Bool(false)
+    case `BIN_8`              => parseBin8(message.tail)
+    case `STR_8`              => parseStr8(message.tail)
+    case FixStrFormat(length) => parseFixStr(length, message.tail)
+    case other                => ParseError.unimplemented
 
 object Main extends App {
   val result = parse(Array[Byte](0xc1))
-  result.toString
   println(result)
 }
 
