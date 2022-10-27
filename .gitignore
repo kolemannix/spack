@@ -1,0 +1,8 @@
+.idea
+target
+ignored
+.bsp
+*.log
+.DS_Store
+.bloop
+.metals
