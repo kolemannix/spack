@@ -20,14 +20,30 @@ object FormatSpec extends ZIOSpecDefault {
         assertTrue(parse(output) == Message.Str(s))
       },
       test("str16") {
-        val s      = List.fill(1000)("x").mkString
+        val s      = List.fill(1143)("x").mkString
         val input  = Message.Str(s)
         val output = write(input)
-        println(s"str8 output: ${BitVector(output)}")
+        println(s"str16 output: ${BitVector(output).toHex}")
         assertTrue(parse(output) == Message.Str(s))
+      },
+      test("str32") {
+        val s      = List.fill(131071)("y").mkString
+        val input  = Message.Str(s)
+        val output = write(input)
+        val parsed = parse(output)
+        assertTrue(parsed == Message.Str(s))
       },
     ),
     suite("Utils")(
+      test("intFromBytes") {
+        val x     = 131071
+        val byte0 = x.getByteBigEndian(0)
+        val byte1 = x.getByteBigEndian(1)
+        val byte2 = x.getByteBigEndian(2)
+        val byte3 = x.getByteBigEndian(3)
+        val y     = intFromBytesBigEndian(byte0, byte1, byte2, byte3)
+        assertTrue(x == y)
+      },
       test("getByteBigEndian positive") {
         val x = 1294967294
         assertTrue(

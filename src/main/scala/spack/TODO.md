@@ -5,7 +5,7 @@ format name     | Read | Write
 positive fixint | [ ]  | [ ] |
 fixmap          | [ ]  | [ ] | 
 fixarray        | [ ]  | [ ] | 
-fixstr          | [ ]  | [ ] | 
+fixstr          | [x]  | [x] | 
 nil             | [ ]  | [ ] | 
 (never used)    | [ ]  | [ ] | 
 false           | [ ]  | [ ] | 

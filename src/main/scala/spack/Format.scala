@@ -6,47 +6,86 @@ import scala.collection.immutable.ArraySeq
 
 import Constants._
 
-object Constants {
-  val NIL: Byte   = 0xc0
-  val FALSE: Byte = 0xc1
-  val TRUE: Byte  = 0xc2
+extension (b: Byte)
+  inline def toUnsignedInt: Int = (b: Int) & 0xff
 
-  val BIN_8: Byte = 0xc4
+extension (i: Int)
+  inline def getByteBigEndian(index: Int): Byte = inline index match {
+    case 0 => (i >>> 24).toByte
+    case 1 => (i >>> 16).toByte
+    case 2 => (i >>> 8).toByte
+    case 3 => i.toByte
+  }
+
+def intFromBytesBigEndian(byte0: Byte, byte1: Byte, byte2: Byte, byte3: Byte): Int = {
+  (byte0 & 0xff) << 24 | (byte1 & 0xff) << 16 | (byte2 & 0xff) << 8.toByte | (byte3 & 0xff)
+}
+
+object Constants {
+  val NIL: Byte   = 0xc0.toByte
+  val FALSE: Byte = 0xc1.toByte
+  val TRUE: Byte  = 0xc2.toByte
+
+  val BIN_8: Byte = 0xc4.toByte
 }
 
 object Str {
-  val STR_8: Byte = 0xd9
-
-  val FIX_STR_MIN: Byte    = 0xa0
-  val FIX_STR_MAX: Byte    = 0xbf
+  val FIX_STR_MIN: Byte    = 0xa0.toByte
+  val FIX_STR_MAX: Byte    = 0xbf.toByte
   val FIX_STR_MIN_INT: Int = 160
   val FIX_STR_MAX_INT: Int = 191
 
   // 0xE0 = 0001_1111
   val FIX_STR_MASK: Byte = 0x1f
   // 0xA0 = 1010_0000
-  val FIX_STR_SENTINEL: Byte = 0xa0
+  val FIX_STR_SENTINEL: Byte = 0xa0.toByte
 
-  val STR_8_SENTINEL: Byte  = 0xd9
-  val STR_16_SENTINEL: Byte = 0xda
-  val STR_32_SENTINEL: Byte = 0xdb
+  val STR_8_SENTINEL: Byte  = 0xd9.toByte
+  val STR_16_SENTINEL: Byte = 0xda.toByte
+  val STR_32_SENTINEL: Byte = 0xdb.toByte
 
-  def parseStr8(message: Array[Byte]): Message.Str | ParseError =
-    val length  = message.head.toUnsignedInt
-    val content = message.slice(1, length + 1)
+  def parseStr8(message: Array[Byte]): Message.Str | ParseError = {
+    val length  = message(1).toUnsignedInt
+    val content = message.slice(2, length + 2)
     if (content.length < length)
       ParseError(s"Underflow reading Str8: expected ${length} bytes, got ${content.length}", 0)
     else
       Message.Str(new String(content, "UTF-8"))
+  }
 
-      /** fixstr stores a byte array whose length is upto 31 bytes:
-        * \+--------+========+
-        * \|101XXXXX| data |
-        * \+--------+========+
-        * XXXXX is a 5-bit unsigned integer which represents N
-        */
+  def parseStr16(message: Array[Byte]): Message.Str | ParseError = {
+    val lengthHi = message(1)
+    val lengthLo = message(2)
+    val length   = lengthHi << 8 | lengthLo
+    val content  = message.slice(3, length + 3)
+    if (content.length < length)
+      ParseError(s"Underflow reading str16: expected ${length} bytes, got ${content.length}", 0)
+    else
+      Message.Str(new String(content, "UTF-8"))
+  }
+
+  def parseStr32(message: Array[Byte]): Message.Str | ParseError = {
+    val lengthBits = message.slice(1, 5)
+    val length     = intFromBytesBigEndian(message(1), message(2), message(3), message(4))
+    val content    = message.slice(5, length + 5)
+
+    println(s"lengthBits: ${lengthBits.mkString(", ")}")
+    println(s"Str32 length is: ${length}")
+
+    if (content.length < length)
+      ParseError(s"Underflow reading str32: expected ${length} bytes, got ${content.length}", 0)
+    else
+      Message.Str(new String(content, "UTF-8"))
+  }
+
+  /** fixstr stores a byte array whose length is upto 31 bytes:
+    * \+--------+========+
+    * \|101XXXXX| data |
+    * \+--------+========+
+    * XXXXX is a 5-bit unsigned integer which represents N
+    */
   def parseFixStr(length: Int, message: Array[Byte]): Message.Str | ParseError =
-    val content = message.take(length)
+    val content = message.slice(1, length + 1)
     if (content.length < length)
       ParseError(s"Underflow reading FixStr: expected ${length} bytes, got ${content.length}", 0)
     else
@@ -58,8 +97,8 @@ object Str {
   object FixStrFormat:
     def unapply(b: Byte): Option[Int] =
       if (b >= FIX_STR_MIN && b <= FIX_STR_MAX) {
-        val length = (b & 0x1f: Byte)
-        println(s"Len: ${length}")
+        val length = (b & 0x1f.toByte)
+        println(s"FixStrLen: ${length}")
         Some(length)
       } else {
         None
@@ -82,7 +121,7 @@ object Str {
       // Write out a FixStr
       val output = new Array[Byte](1 + len)
       // 101 | xxxxx
-      val formatBit: Byte = FIX_STR_SENTINEL | len.toByte
+      val formatBit: Byte = (FIX_STR_SENTINEL | len.toByte).toByte
       println(s"formatBit=${formatBit.toUnsignedInt}")
       output.update(0, formatBit)
       // @Profile: with while loop, zipWithIndex, etc
@@ -93,12 +132,12 @@ object Str {
       // Write out a Str8
       val output = new Array[Byte](2 + len)
       output.update(0, STR_8_SENTINEL)
-      // Not sure if Int to Byte assumes signed and does 2s complement stuff
-      val lenUByte: Byte = len & 0xff: Byte
+      val lenUByte: Byte = len.toByte
       output.update(1, lenUByte)
       writeStringFrom(output, 2, s)
       output
     } else if (len <= 65535) {
+      println("Writing str16")
       // Write out a Str16
       val output = new Array[Byte](3 + len)
       output.update(0, STR_16_SENTINEL)
@@ -123,20 +162,6 @@ object Str {
 
 }
 
-given Conversion[Int, Byte] with
-  def apply(i: Int): Byte = i.toByte
-
-extension (b: Byte)
-  inline def toUnsignedInt: Int = (b: Int) & 0xff
-
-extension (i: Int)
-  inline def getByteBigEndian(index: Int): Byte = inline index match {
-    case 0 => i >>> 24
-    case 1 => i >>> 16
-    case 2 => i >>> 8
-    case 3 => i
-  }
-
 enum Message {
   case Bool(value: Boolean)
   case Bin(bytes: ArraySeq[Byte])
@@ -149,14 +174,14 @@ case class ParseError(message: String, offset: Int)
 object ParseError:
   def unimplemented = ParseError("UNIMPLEMENTED", 0)
 
-// TODO: Optimize by maintaining cursor and not slicing / copying
-def parseBin8(message: Array[Byte]): Message.Bin | ParseError =
-  val length  = message.head.toUnsignedInt
-  val content = message.slice(1, length + 1)
+def parseBin8(message: Array[Byte]): Message.Bin | ParseError = {
+  val length  = message(1).toUnsignedInt
+  val content = message.slice(2, length + 2)
   if (content.length < length)
     ParseError(s"Underflow reading Bin8: expected ${length} bytes, got ${content.length}", 0)
   else
     Message.Bin(ArraySeq.unsafeWrapArray(content))
+}
 
 def write(message: Message): Array[Byte] =
   message match {
@@ -167,13 +192,16 @@ def write(message: Message): Array[Byte] =
     case Message.Bin(s)      => Array.emptyByteArray
   }
 
-def parse(message: Array[Byte]): Message | ParseError =
-  println(s"Parsing: [${message.mkString(" ")}]")
-  message(0) match
+def parse(message: Array[Byte]): Message | ParseError = {
+  message(0) match {
     case `NIL`                    => Message.Nil
     case `FALSE`                  => Message.Bool(true)
     case `TRUE`                   => Message.Bool(false)
-    case `BIN_8`                  => parseBin8(message.tail)
-    case Str.`STR_8`              => Str.parseStr8(message.tail)
-    case Str.FixStrFormat(length) => Str.parseFixStr(length, message.tail)
+    case `BIN_8`                  => parseBin8(message)
+    case Str.`STR_8_SENTINEL`     => Str.parseStr8(message)
+    case Str.`STR_16_SENTINEL`    => Str.parseStr16(message)
+    case Str.`STR_32_SENTINEL`    => Str.parseStr32(message)
+    case Str.FixStrFormat(length) => Str.parseFixStr(length, message)
     case other                    => ParseError.unimplemented
+  }
+}
