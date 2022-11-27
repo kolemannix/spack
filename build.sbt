@@ -8,6 +8,9 @@ lazy val root = project.in(file(".")).settings(
   ),
   libraryDependencies ++= Seq(
     "org.scodec" %% "scodec-bits" % "1.1.34",
+    "com.typesafe.scala-logging" %% "scala-logging" % "3.9.4",
+    "ch.qos.logback" % "logback-classic" % "1.2.10",
+
     // "dev.zio"       %% "zio"         % "2.0.3",
     "dev.zio" %% "zio-test"     % "2.0.3" % Test,
     "dev.zio" %% "zio-test-sbt" % "2.0.3" % Test,

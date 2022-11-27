@@ -9,29 +9,32 @@ object FormatSpec extends ZIOSpecDefault {
       test("FixStr") {
         val input  = Message.Str("foobear")
         val output = write(input)
-        println(s"fixstr output: ${BitVector(output)}")
-        assertTrue(parse(output) == Message.Str("foobear"))
+        assertTrue(parse(output) == Right(ParseSuccess(Message.Str("foobear"), 8)))
       },
       test("str8") {
         val s      = List.fill(100)("x").mkString
         val input  = Message.Str(s)
         val output = write(input)
-        println(s"str8 output: ${BitVector(output)}")
-        assertTrue(parse(output) == Message.Str(s))
+        assertTrue(parse(output).toOption.get.message == Message.Str(s))
       },
       test("str16") {
         val s      = List.fill(1143)("x").mkString
         val input  = Message.Str(s)
         val output = write(input)
-        println(s"str16 output: ${BitVector(output).toHex}")
-        assertTrue(parse(output) == Message.Str(s))
+        assertTrue(parse(output).toOption.get.message == Message.Str(s))
+      },
+      test("str16 higher") {
+        val s      = List.fill(32731)("i").mkString
+        val input  = Message.Str(s)
+        val output = write(input)
+        assertTrue(parse(output).toOption.get.message == Message.Str(s))
       },
       test("str32") {
         val s      = List.fill(131071)("y").mkString
         val input  = Message.Str(s)
         val output = write(input)
         val parsed = parse(output)
-        assertTrue(parsed == Message.Str(s))
+        assertTrue(parsed.toOption.get.message == Message.Str(s))
       },
     ),
     suite("Utils")(
@@ -41,7 +44,7 @@ object FormatSpec extends ZIOSpecDefault {
         val byte1 = x.getByteBigEndian(1)
         val byte2 = x.getByteBigEndian(2)
         val byte3 = x.getByteBigEndian(3)
-        val y     = intFromBytesBigEndian(byte0, byte1, byte2, byte3)
+        val y     = int32FromBytes(byte0, byte1, byte2, byte3)
         assertTrue(x == y)
       },
       test("getByteBigEndian positive") {

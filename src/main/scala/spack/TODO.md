@@ -31,9 +31,9 @@ fixext 2        | [ ]  | [ ] |
 fixext 4        | [ ]  | [ ] | 
 fixext 8        | [ ]  | [ ] | 
 fixext 16       | [ ]  | [ ] | 
-str 8           | [ ]  | [ ] | 
-str 16          | [ ]  | [ ] | 
-str 32          | [ ]  | [ ] | 
+str 8           | [x]  | [x] | 
+str 16          | [x]  | [x] | 
+str 32          | [x]  | [x] | 
 array 16        | [ ]  | [ ] | 
 array 32        | [ ]  | [ ] | 
 map 16          | [ ]  | [ ] | 
