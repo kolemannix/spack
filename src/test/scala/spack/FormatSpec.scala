@@ -40,15 +40,27 @@ object FormatSpec extends ZIOSpecDefault {
     suite("Map")(
       test("FixMap") {
         val input = Message.Map(Seq(
-          Message.Str("foo") -> Message.Str("bear"),
-          Message.Str("bar") -> Message.Str("BAR"),
+          Message.Str("foo")  -> Message.Str("bear"),
+          Message.Str("bar")  -> Message.Str("BAR"),
           Message.Bool(false) -> Message.Bool(true),
         ))
         val output = write(input)
         val parsed = parse(output)
         BitVector(output).printHexDump()
         assertTrue(parsed.toOption.get.message == input)
-      }
+      },
+      test("Map16") {
+        val input = Message.Map(
+          (1 to 100000).map(x => (Message.Str(x.toString) -> Message.Bool(x % 2 == 0)))
+        )
+        val start = System.currentTimeMillis()
+        val output = write(input)
+        val parsed = parse(output)
+        val end = System.currentTimeMillis()
+        // BitVector(output).printHexDump()
+        println(s"Elapsed: ${end - start}ms")
+        assertTrue(parsed.toOption.get.message == input)
+      },
     ),
     suite("Utils")(
       test("intFromBytes") {

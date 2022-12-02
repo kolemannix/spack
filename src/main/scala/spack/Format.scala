@@ -1,5 +1,4 @@
 package spack
-import scodec.bits._
 
 import scala.Conversion
 import scala.collection.immutable
@@ -25,8 +24,8 @@ extension (i: Int)
 inline def int32FromBytes(byte0: Byte, byte1: Byte, byte2: Byte, byte3: Byte): Int = {
   (byte0 & 0xff) << 24 | (byte1 & 0xff) << 16 | (byte2 & 0xff) << 8.toByte | (byte3 & 0xff)
 }
-inline def int16FromBytes(byte2: Byte, byte3: Byte): Int = {
-  (byte2 & 0xff) << 8.toByte | (byte3 & 0xff)
+inline def int16FromBytes(byteHi: Byte, byteLo: Byte): Int = {
+  (byteHi & 0xff) << 8.toByte | (byteLo & 0xff)
 }
 
 object Constants {
@@ -177,6 +176,10 @@ object Str {
 }
 
 object Map {
+
+  final val MAP_16_SENTINEL = 0xde.toByte
+  final val MAP_32_SENTINEL = 0xdf.toByte
+
   object FixMapFormat {
     def unapply(b: Byte): Option[Int] =
       if ((b & 0xf0) == 0x80) {
@@ -188,55 +191,30 @@ object Map {
       }
   }
 
-  def writeMap(map: Message.Map): Array[Byte] = {
-    def writeMapEntries(output: mutable.Buffer[Byte], entries: Seq[(Message, Message)]) = {
-      map.entries.foreach { case (key, value) =>
-        val keyArr = write(key)
-        output ++= keyArr
-        val valueArr = write(value)
-        output ++= valueArr
-      }
-    }
-    map.entries.size match {
-      case len if len < 16 => {
-        val output = mutable.Buffer[Byte]()
-        // Format Byte
-        output += (0x80 | len).toByte
-        writeMapEntries(output, map.entries)
-        output.toArray
-      }
-      case len if len < 65535 => {
-        // Map16
-        val output = mutable.Buffer[Byte]()
-        // Format Byte
-        output += 0xde.toByte
-        // Length bytes
-        val lenUpperBigEndian = len.getByteBigEndian(2)
-        val lenLowerBigEndian = len.getByteBigEndian(3)
-        output += lenUpperBigEndian
-        output += lenLowerBigEndian
-        writeMapEntries(output, map.entries)
-        output.toArray
-      }
-      case len => {
-        // Map32
-        val output = mutable.Buffer[Byte]()
-        // Format Byte
-        output += 0xde.toByte
-        // Length bytes
-        output += len.getByteBigEndian(0)
-        output += len.getByteBigEndian(1)
-        output += len.getByteBigEndian(2)
-        output += len.getByteBigEndian(3)
-        writeMapEntries(output, map.entries)
-        output.toArray
-      }
-    }
-  }
-
   def parseFixMap(length: Int, buffer: Array[Byte], offset: Int): ParseResult[Message.Map] = {
     logger.debug("parseFixMap")
     val objectStartOffset = offset + 1
+    parseMapObjects(buffer, length, objectStartOffset)
+  }
+
+  def parseMap16(buffer: Array[Byte], offset: Int): ParseResult[Message.Map] = {
+    logger.debug("parseMap16")
+    val lengthHi = buffer(offset + 1)
+    val lengthLo = buffer(offset + 2)
+    val length = int16FromBytes(lengthHi, lengthLo)
+    val objectStartOffset = offset + 3
+    parseMapObjects(buffer, length, objectStartOffset)
+  }
+
+
+  def parseMap32(buffer: Array[Byte], offset: Int): ParseResult[Message.Map] = {
+    logger.debug("parseMap32")
+    val length0 = buffer(offset + 1)
+    val length1 = buffer(offset + 2)
+    val length2 = buffer(offset + 3)
+    val length3 = buffer(offset + 4)
+    val length = int32FromBytes(length0, length1, length2, length3)
+    val objectStartOffset = offset + 5
     parseMapObjects(buffer, length, objectStartOffset)
   }
 
@@ -260,6 +238,52 @@ object Map {
       }
     }
     ParseResult.succeed(Message.Map(pairs.toSeq), offset)
+  }
+
+  def writeMap(map: Message.Map): Array[Byte] = {
+    def writeMapEntries(output: mutable.Buffer[Byte], entries: Seq[(Message, Message)]) = {
+      map.entries.foreach { case (key, value) =>
+        val keyArr = write(key)
+        output ++= keyArr
+        val valueArr = write(value)
+        output ++= valueArr
+      }
+    }
+    map.entries.size match {
+      case len if len < 16 => {
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += (0x80 | len).toByte
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+      case len if len < 65535 => {
+        // Map16
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += MAP_16_SENTINEL
+        // Length bytes
+        val lenUpperBigEndian = len.getByteBigEndian(2)
+        val lenLowerBigEndian = len.getByteBigEndian(3)
+        output += lenUpperBigEndian
+        output += lenLowerBigEndian
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+      case len => {
+        // Map32
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += MAP_32_SENTINEL
+        // Length bytes
+        output += len.getByteBigEndian(0)
+        output += len.getByteBigEndian(1)
+        output += len.getByteBigEndian(2)
+        output += len.getByteBigEndian(3)
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+    }
   }
 
 }
@@ -287,8 +311,9 @@ object ParseResult {
 //   }
 // }
 
-object ParseError:
+object ParseError {
   def unimplemented = ParseError("UNIMPLEMENTED", 0)
+}
 
 def parseBin8(buffer: Array[Byte], offset: Int): ParseResult[Message.Bin] = {
   val length  = buffer(offset + 1).toUnsignedInt
@@ -326,6 +351,8 @@ def innerParse(buffer: Array[Byte], offset: Int): Either[ParseError, ParseSucces
     case Str.`STR_32_SENTINEL`    => Str.parseStr32(buffer, offset)
     case Str.FixStrFormat(length) => Str.parseFixStr(length, buffer, offset)
     case Map.FixMapFormat(length) => Map.parseFixMap(length, buffer, offset)
+    case Map.`MAP_16_SENTINEL` => Map.parseMap16(buffer, offset)
+    case Map.`MAP_32_SENTINEL` => Map.parseMap32(buffer, offset)
     case other                    => ParseResult.fail("UNIMPLEMENTED", offset)
   }
 }
