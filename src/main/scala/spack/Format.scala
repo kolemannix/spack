@@ -3,6 +3,7 @@ import scodec.bits._
 
 import scala.Conversion
 import scala.collection.immutable
+import scala.collection.mutable
 
 import Constants._
 import com.typesafe.scalalogging.Logger
@@ -65,11 +66,11 @@ object Str {
     val lengthLo = buffer(offset + 2)
     logger.debug(s"parseStr16 len hi: ${lengthHi}")
     logger.debug(s"parseStr16 len lo: ${lengthLo}")
-    val length   = (lengthHi & 0xff) << 8 | lengthLo & 0xff
+    val length     = (lengthHi & 0xff) << 8 | lengthLo & 0xff
     val lengthEasy = int16FromBytes(lengthHi, lengthLo)
     logger.debug(s"parseStr16 len int: ${length}")
     logger.debug(s"parseStr16 len int (easy): ${lengthEasy}")
-    val content  = buffer.slice(offset + 3, offset + length + 3)
+    val content = buffer.slice(offset + 3, offset + length + 3)
     if (content.length < length)
       ParseResult.fail(s"Underflow reading str16: expected ${length} bytes, got ${content.length}", 0)
     else
@@ -77,8 +78,8 @@ object Str {
   }
 
   def parseStr32(buffer: Array[Byte], offset: Int): ParseResult[Message.Str] = {
-    val length     = int32FromBytes(buffer(offset + 1), buffer(offset + 2), buffer(offset + 3), buffer(offset + 4))
-    val content    = buffer.slice(offset + 5, offset + length + 5)
+    val length  = int32FromBytes(buffer(offset + 1), buffer(offset + 2), buffer(offset + 3), buffer(offset + 4))
+    val content = buffer.slice(offset + 5, offset + length + 5)
 
     logger.debug(s"Str32 length is: ${length}")
 
@@ -102,9 +103,9 @@ object Str {
       ParseResult.succeed(Message.Str(new String(content, "UTF-8")), offset + length + 1)
   }
 
-    /** Checks for the FixStr format, and if it matches,
-      * returns the length from the last 5 bits as an integer
-      */
+  /** Checks for the FixStr format, and if it matches,
+    * returns the length from the last 5 bits as an integer
+    */
   object FixStrFormat:
     def unapply(b: Byte): Option[Int] =
       if (b >= FIX_STR_MIN && b <= FIX_STR_MAX) {
@@ -187,21 +188,70 @@ object Map {
       }
   }
 
+  def writeMap(map: Message.Map): Array[Byte] = {
+    def writeMapEntries(output: mutable.Buffer[Byte], entries: Seq[(Message, Message)]) = {
+      map.entries.foreach { case (key, value) =>
+        val keyArr = write(key)
+        output ++= keyArr
+        val valueArr = write(value)
+        output ++= valueArr
+      }
+    }
+    map.entries.size match {
+      case len if len < 16 => {
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += (0x80 | len).toByte
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+      case len if len < 65535 => {
+        // Map16
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += 0xde.toByte
+        // Length bytes
+        val lenUpperBigEndian = len.getByteBigEndian(2)
+        val lenLowerBigEndian = len.getByteBigEndian(3)
+        output += lenUpperBigEndian
+        output += lenLowerBigEndian
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+      case len => {
+        // Map32
+        val output = mutable.Buffer[Byte]()
+        // Format Byte
+        output += 0xde.toByte
+        // Length bytes
+        output += len.getByteBigEndian(0)
+        output += len.getByteBigEndian(1)
+        output += len.getByteBigEndian(2)
+        output += len.getByteBigEndian(3)
+        writeMapEntries(output, map.entries)
+        output.toArray
+      }
+    }
+  }
+
   def parseFixMap(length: Int, buffer: Array[Byte], offset: Int): ParseResult[Message.Map] = {
+    logger.debug("parseFixMap")
     val objectStartOffset = offset + 1
     parseMapObjects(buffer, length, objectStartOffset)
   }
 
   def parseMapObjects(buffer: Array[Byte], length: Int, startOffset: Int): ParseResult[Message.Map] = {
-    val pairs = new Array[(Message, Message)](length)
-    var index = 0
+    val pairs  = new Array[(Message, Message)](length)
+    var index  = 0
     var offset = startOffset
     while (index < length) {
       innerParse(buffer, offset) match {
-        case Left(err) => ParseError(s"Failed to parse map key: ${err.message}", offset)
+        case Left(err) => 
+          return ParseResult.fail(s"Failed to parse map key: ${err.message}", offset)
         case Right(keySuccess) =>
-          innerParse(buffer, offset + keySuccess.offset) match {
-            case Left(err) => ParseError(s"Failed to parse map value: ${err.message}", keySuccess.offset)
+          innerParse(buffer, keySuccess.offset) match {
+            case Left(err) => 
+              return ParseResult.fail(s"Failed to parse map value: ${err.message}", keySuccess.offset)
             case Right(valueSuccess) =>
               pairs.update(index, (keySuccess.message, valueSuccess.message))
               index += 1
@@ -228,7 +278,7 @@ case class ParseSuccess[+A <: Message](message: A, offset: Int)
 
 type ParseResult[+A <: Message] = Either[ParseError, ParseSuccess[A]]
 object ParseResult {
-  def succeed[A <: Message](message: A, offset: Int = 0): ParseResult[A] = Right(ParseSuccess(message, offset))
+  def succeed[A <: Message](message: A, offset: Int): ParseResult[A]   = Right(ParseSuccess(message, offset))
   def fail[A <: Message](message: String, offset: Int = 0): ParseResult[A] = Left(ParseError(message, offset))
 }
 // extension[A <: Message] (res: ParseResult[A]) {
@@ -240,13 +290,15 @@ object ParseResult {
 object ParseError:
   def unimplemented = ParseError("UNIMPLEMENTED", 0)
 
-def parseBin8(buffer: Array[Byte]): ParseResult[Message.Bin] = {
-  val length  = buffer(1).toUnsignedInt
-  val content = buffer.slice(2, length + 2)
+def parseBin8(buffer: Array[Byte], offset: Int): ParseResult[Message.Bin] = {
+  val length  = buffer(offset + 1).toUnsignedInt
+  val content = buffer.slice(offset + 2, offset + length + 2)
   if (content.length < length)
-    ParseResult.fail(s"Underflow reading Bin8: expected ${length} bytes, got ${content.length}", 0)
-  else
-    ParseResult.succeed(Message.Bin(immutable.ArraySeq.unsafeWrapArray(content)))
+    ParseResult.fail(s"Underflow reading Bin8: expected ${length} bytes, got ${content.length}", offset)
+  else {
+    val msg: Message.Bin = Message.Bin(immutable.ArraySeq.unsafeWrapArray(content))
+    ParseResult.succeed(msg, offset + length + 2)
+  }
 }
 
 def write(message: Message): Array[Byte] =
@@ -256,19 +308,19 @@ def write(message: Message): Array[Byte] =
     case Message.Bool(true)  => Array(Constants.TRUE)
     case Message.Bool(false) => Array(Constants.FALSE)
     case Message.Str(s)      => Str.writeString(s)
-    case Message.Bin(s)      => throw new RuntimeException("WRITE Map unimplemented")
+    case Message.Bin(s)      => throw new RuntimeException("WRITE bin unimplemented")
     // Recursive cases
-    case Message.Map(entries) => throw new RuntimeException("WRITE Map unimplemented")
+    case map @ Message.Map(_) => Map.writeMap(map)
   }
 
 /** Returns the number of bytes consumed during parsing
   */
 def innerParse(buffer: Array[Byte], offset: Int): Either[ParseError, ParseSuccess[Message]] = {
   buffer(offset) match {
-    case `NIL`                    => ParseResult.succeed(Message.Nil, 1)
-    case `FALSE`                  => ParseResult.succeed(Message.Bool(true), 1)
-    case `TRUE`                   => ParseResult.succeed(Message.Bool(false), 1)
-    case `BIN_8`                  => parseBin8(buffer)
+    case `NIL`                    => ParseResult.succeed(Message.Nil, offset + 1)
+    case `FALSE`                  => ParseResult.succeed(Message.Bool(false), offset + 1)
+    case `TRUE`                   => ParseResult.succeed(Message.Bool(true), offset + 1)
+    case `BIN_8`                  => parseBin8(buffer, offset)
     case Str.`STR_8_SENTINEL`     => Str.parseStr8(buffer, offset)
     case Str.`STR_16_SENTINEL`    => Str.parseStr16(buffer, offset)
     case Str.`STR_32_SENTINEL`    => Str.parseStr32(buffer, offset)

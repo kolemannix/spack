@@ -37,6 +37,19 @@ object FormatSpec extends ZIOSpecDefault {
         assertTrue(parsed.toOption.get.message == Message.Str(s))
       },
     ),
+    suite("Map")(
+      test("FixMap") {
+        val input = Message.Map(Seq(
+          Message.Str("foo") -> Message.Str("bear"),
+          Message.Str("bar") -> Message.Str("BAR"),
+          Message.Bool(false) -> Message.Bool(true),
+        ))
+        val output = write(input)
+        val parsed = parse(output)
+        BitVector(output).printHexDump()
+        assertTrue(parsed.toOption.get.message == input)
+      }
+    ),
     suite("Utils")(
       test("intFromBytes") {
         val x     = 131071
